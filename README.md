@@ -45,7 +45,7 @@ git clone https://github.com/microsoft/vcpkg.git
 cmake -B build \
       -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake \
       -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake --build build -- -j8
 ```
 
 On Windows with Visual Studio generator:

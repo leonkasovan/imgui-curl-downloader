@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <fstream>
 #include <filesystem>
+#include <chrono>
 
 namespace fs = std::filesystem;
 
@@ -28,6 +29,8 @@ static size_t writeCallback(void* ptr, size_t size, size_t nmemb, void* userdata
 // Progress callback: updates progress/speed, handles pause and cancel
 struct ProgressData {
     DownloadTask* task;
+    curl_off_t last_dlnow{0};
+    std::chrono::steady_clock::time_point last_time{std::chrono::steady_clock::now()};
 };
 
 static int progressCallback(void* userdata,
@@ -58,6 +61,18 @@ static int progressCallback(void* userdata,
     task->totalBytes.store(static_cast<long long>(dltotal));
     if (dltotal > 0)
         task->progress.store(static_cast<double>(dlnow) / static_cast<double>(dltotal));
+
+    // Compute instantaneous download speed (bytes/sec) based on deltas
+    auto now = std::chrono::steady_clock::now();
+    double dt = std::chrono::duration_cast<std::chrono::duration<double>>(now - pd->last_time).count();
+    if (dt > 0.05) { // update at most ~20Hz
+        curl_off_t delta = dlnow - pd->last_dlnow;
+        if (delta < 0) delta = 0;
+        double bps = static_cast<double>(delta) / dt;
+        task->speedBps.store(bps);
+        pd->last_time = now;
+        pd->last_dlnow = dlnow;
+    }
 
     return 0;
 }
@@ -114,9 +129,9 @@ static void downloadThread(DownloadTask* task) {
 
     CURLcode res = curl_easy_perform(curl);
 
-    double speed = 0.0;
-    curl_easy_getinfo(curl, CURLINFO_SPEED_DOWNLOAD, &speed);
-    task->speedBps.store(speed);
+    curl_off_t speed_dl = 0;
+    curl_easy_getinfo(curl, CURLINFO_SPEED_DOWNLOAD_T, &speed_dl);
+    task->speedBps.store(static_cast<double>(speed_dl));
 
     curl_easy_cleanup(curl);
     ofs.close();
